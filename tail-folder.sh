@@ -74,29 +74,38 @@ show_changes() {
     elif [[ "$event" == *"MODIFY"* ]] && [[ -f "$filepath" ]]; then
         local backup_file="$TEMP_DIR/$(basename "$filepath").backup"
         
-        if [[ $(file -b --mime-type "$filepath") == text/* ]] && [[ $(wc -l < "$filepath" 2>/dev/null || echo 1000) -lt 100 ]]; then
+        # Check if file is text and reasonable size
+        local file_size=$(wc -c < "$filepath" 2>/dev/null || echo 1000000)
+        local line_count=$(wc -l < "$filepath" 2>/dev/null || echo 1000)
+        
+        if [[ $file_size -gt 50000 ]]; then
+            echo "--- FILE TOO LARGE ($(($file_size / 1024))KB) ---"
+        elif [[ $line_count -gt 500 ]]; then
+            echo "--- FILE TOO MANY LINES ($line_count lines) ---"
+        elif [[ $(file -b --mime-type "$filepath" 2>/dev/null) == text/* ]]; then
             if [[ -f "$backup_file" ]]; then
                 echo "--- DIFF ---"
-                diff -u "$backup_file" "$filepath" 2>/dev/null || {
+                diff -u "$backup_file" "$filepath" 2>/dev/null | head -50 || {
                     echo "Changes detected (diff unavailable):"
-                    echo "Current content:"
+                    echo "Current content (first 20 lines):"
                     head -20 "$filepath" | sed 's/^/  /'
-                    if [[ $(wc -l < "$filepath") -gt 20 ]]; then
-                        echo "  ... ($(( $(wc -l < "$filepath") - 20 )) more lines)"
+                    if [[ $line_count -gt 20 ]]; then
+                        echo "  ... ($(( $line_count - 20 )) more lines)"
                     fi
                 }
             else
                 echo "--- MODIFIED FILE (no previous backup) ---"
+                echo "Content (first 20 lines):"
                 head -20 "$filepath" | sed 's/^/  /'
-                if [[ $(wc -l < "$filepath") -gt 20 ]]; then
-                    echo "  ... ($(( $(wc -l < "$filepath") - 20 )) more lines)"
+                if [[ $line_count -gt 20 ]]; then
+                    echo "  ... ($(( $line_count - 20 )) more lines)"
                 fi
             fi
             
-            # Update backup
+            # Update backup for next comparison
             cp "$filepath" "$backup_file" 2>/dev/null
         else
-            echo "--- BINARY FILE MODIFIED ---"
+            echo "--- BINARY FILE MODIFIED ($(($file_size / 1024))KB) ---"
         fi
         echo
     fi
@@ -105,8 +114,12 @@ show_changes() {
 # Function to create initial backups
 create_initial_backups() {
     echo "Creating initial backups for diff comparison..."
-    find "$FOLDER" -type f -name "*.txt" -o -name "*.md" -o -name "*.sh" -o -name "*.py" -o -name "*.js" -o -name "*.html" -o -name "*.css" -o -name "*.json" -o -name "*.yml" -o -name "*.yaml" -o -name "*.xml" 2>/dev/null | while read -r file; do
-        if [[ $(wc -l < "$file" 2>/dev/null || echo 1000) -lt 100 ]]; then
+    find "$FOLDER" -type f 2>/dev/null | while read -r file; do
+        local file_size=$(wc -c < "$file" 2>/dev/null || echo 1000000)
+        local line_count=$(wc -l < "$file" 2>/dev/null || echo 1000)
+        
+        # Only backup text files under 50KB and 500 lines
+        if [[ $file_size -le 50000 ]] && [[ $line_count -le 500 ]] && [[ $(file -b --mime-type "$file" 2>/dev/null) == text/* ]]; then
             cp "$file" "$TEMP_DIR/$(basename "$file").backup" 2>/dev/null
         fi
     done
