@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# tail-folder.sh - Version 2.0
 # Script to tail all changes in a folder recursively with diff output
 # Works on both Linux (inotifywait) and macOS (fswatch)
 
@@ -53,13 +54,25 @@ show_changes() {
     
     if [[ "$event" == *"CREATE"* ]] || [[ "$event" == *"MOVED_TO"* ]]; then
         echo "--- NEW FILE ---"
-        if [[ -f "$filepath" ]] && [[ $(file -b --mime-type "$filepath") == text/* ]] && [[ $(wc -l < "$filepath" 2>/dev/null || echo 1000) -lt 100 ]]; then
-            head -20 "$filepath" | sed 's/^/+ /'
-            if [[ $(wc -l < "$filepath") -gt 20 ]]; then
-                echo "+ ... ($(( $(wc -l < "$filepath") - 20 )) more lines)"
+        if [[ -f "$filepath" ]]; then
+            local file_size=$(wc -c < "$filepath" 2>/dev/null || echo 1000000)
+            local line_count=$(wc -l < "$filepath" 2>/dev/null || echo 1000)
+            local mime_type=$(file -b --mime-type "$filepath" 2>/dev/null || echo "unknown")
+            
+            if [[ $file_size -gt 50000 ]]; then
+                echo "+ [Large file: $(($file_size / 1024))KB]"
+            elif [[ $line_count -gt 500 ]]; then
+                echo "+ [Many lines: $line_count lines]"  
+            elif [[ "$mime_type" == text/* ]] || [[ "$filepath" == *.txt ]] || [[ "$filepath" == *.md ]] || [[ "$filepath" == *.sh ]] || [[ "$filepath" == *.py ]] || [[ "$filepath" == *.js ]] || [[ "$filepath" == *.json ]] || [[ "$filepath" == *.yml ]] || [[ "$filepath" == *.yaml ]] || [[ "$filepath" == *.xml ]] || [[ "$filepath" == *.html ]] || [[ "$filepath" == *.css ]]; then
+                head -20 "$filepath" | sed 's/^/+ /'
+                if [[ $line_count -gt 20 ]]; then
+                    echo "+ ... ($(( $line_count - 20 )) more lines)"
+                fi
+            else
+                echo "+ [Binary file: $mime_type, $(($file_size / 1024))KB]"
             fi
         else
-            echo "+ [Binary file or too large to display]"
+            echo "+ [File not found or removed]"
         fi
         echo
     elif [[ "$event" == *"DELETE"* ]] || [[ "$event" == *"MOVED_FROM"* ]]; then
@@ -72,40 +85,48 @@ show_changes() {
         fi
         echo
     elif [[ "$event" == *"MODIFY"* ]] && [[ -f "$filepath" ]]; then
-        local backup_file="$TEMP_DIR/$(basename "$filepath").backup"
+        local backup_file="$TEMP_DIR/$(echo "$filepath" | sed 's|/|_|g').backup"
         
         # Check if file is text and reasonable size
         local file_size=$(wc -c < "$filepath" 2>/dev/null || echo 1000000)
         local line_count=$(wc -l < "$filepath" 2>/dev/null || echo 1000)
+        local mime_type=$(file -b --mime-type "$filepath" 2>/dev/null || echo "unknown")
         
         if [[ $file_size -gt 50000 ]]; then
-            echo "--- FILE TOO LARGE ($(($file_size / 1024))KB) ---"
+            echo "--- LARGE FILE MODIFIED ($(($file_size / 1024))KB) ---"
+            echo "File too large to show diff, but modification detected"
         elif [[ $line_count -gt 500 ]]; then
-            echo "--- FILE TOO MANY LINES ($line_count lines) ---"
-        elif [[ $(file -b --mime-type "$filepath" 2>/dev/null) == text/* ]]; then
+            echo "--- MANY LINES MODIFIED ($line_count lines) ---"
+            echo "File has too many lines to show diff, but modification detected"
+        elif [[ "$mime_type" == text/* ]] || [[ "$filepath" == *.txt ]] || [[ "$filepath" == *.md ]] || [[ "$filepath" == *.sh ]] || [[ "$filepath" == *.py ]] || [[ "$filepath" == *.js ]] || [[ "$filepath" == *.json ]] || [[ "$filepath" == *.yml ]] || [[ "$filepath" == *.yaml ]] || [[ "$filepath" == *.xml ]] || [[ "$filepath" == *.html ]] || [[ "$filepath" == *.css ]]; then
             if [[ -f "$backup_file" ]]; then
                 echo "--- DIFF ---"
-                diff -u "$backup_file" "$filepath" 2>/dev/null | head -50 || {
-                    echo "Changes detected (diff unavailable):"
-                    echo "Current content (first 20 lines):"
-                    head -20 "$filepath" | sed 's/^/  /'
-                    if [[ $line_count -gt 20 ]]; then
-                        echo "  ... ($(( $line_count - 20 )) more lines)"
+                local diff_output=$(diff -u "$backup_file" "$filepath" 2>/dev/null)
+                if [[ -n "$diff_output" ]]; then
+                    echo "$diff_output" | head -50
+                    local diff_lines=$(echo "$diff_output" | wc -l)
+                    if [[ $diff_lines -gt 50 ]]; then
+                        echo "... ($(($diff_lines - 50)) more diff lines truncated)"
                     fi
-                }
+                else
+                    echo "File modified but no diff detected (possibly timestamp/metadata change)"
+                    echo "Current content (first 10 lines):"
+                    head -10 "$filepath" | sed 's/^/  /'
+                fi
             else
                 echo "--- MODIFIED FILE (no previous backup) ---"
-                echo "Content (first 20 lines):"
+                echo "Current content (first 20 lines):"
                 head -20 "$filepath" | sed 's/^/  /'
                 if [[ $line_count -gt 20 ]]; then
                     echo "  ... ($(( $line_count - 20 )) more lines)"
                 fi
             fi
             
-            # Update backup for next comparison
+            # Always update backup for next comparison
             cp "$filepath" "$backup_file" 2>/dev/null
         else
-            echo "--- BINARY FILE MODIFIED ($(($file_size / 1024))KB) ---"
+            echo "--- BINARY FILE MODIFIED ($(($file_size / 1024))KB, type: $mime_type) ---"
+            echo "Binary file changed, cannot show diff"
         fi
         echo
     fi
@@ -119,8 +140,9 @@ create_initial_backups() {
         local line_count=$(wc -l < "$file" 2>/dev/null || echo 1000)
         
         # Only backup text files under 50KB and 500 lines
-        if [[ $file_size -le 50000 ]] && [[ $line_count -le 500 ]] && [[ $(file -b --mime-type "$file" 2>/dev/null) == text/* ]]; then
-            cp "$file" "$TEMP_DIR/$(basename "$file").backup" 2>/dev/null
+        local mime_type=$(file -b --mime-type "$file" 2>/dev/null || echo "unknown")
+        if [[ $file_size -le 50000 ]] && [[ $line_count -le 500 ]] && ([[ "$mime_type" == text/* ]] || [[ "$file" == *.txt ]] || [[ "$file" == *.md ]] || [[ "$file" == *.sh ]] || [[ "$file" == *.py ]] || [[ "$file" == *.js ]] || [[ "$file" == *.json ]] || [[ "$file" == *.yml ]] || [[ "$file" == *.yaml ]] || [[ "$file" == *.xml ]] || [[ "$file" == *.html ]] || [[ "$file" == *.css ]]); then
+            cp "$file" "$TEMP_DIR/$(echo "$file" | sed 's|/|_|g').backup" 2>/dev/null
         fi
     done
 }
@@ -136,6 +158,7 @@ trap cleanup EXIT INT TERM
 
 create_initial_backups
 
+echo "tail-folder.sh v2.0 - File Change Monitor"
 echo "Monitoring changes in: $FOLDER"
 echo "Press Ctrl+C to stop"
 echo "Temporary files stored in: $TEMP_DIR"
