@@ -101,19 +101,21 @@ show_changes() {
             local mime_type=$(file -b --mime-type "$filepath" 2>/dev/null || echo "unknown")
             
             if [[ $file_size -gt 50000 ]]; then
-                echo "+ [Large file: $(($file_size / 1024))KB]"
+                echo -e "${GREEN}+ [Large file: $(($file_size / 1024))KB]${NC}"
             elif [[ $line_count -gt 500 ]]; then
-                echo "+ [Many lines: $line_count lines]"  
+                echo -e "${GREEN}+ [Many lines: $line_count lines]${NC}"  
             elif [[ "$mime_type" == text/* ]] || [[ "$filepath" == *.txt ]] || [[ "$filepath" == *.md ]] || [[ "$filepath" == *.sh ]] || [[ "$filepath" == *.py ]] || [[ "$filepath" == *.js ]] || [[ "$filepath" == *.json ]] || [[ "$filepath" == *.yml ]] || [[ "$filepath" == *.yaml ]] || [[ "$filepath" == *.xml ]] || [[ "$filepath" == *.html ]] || [[ "$filepath" == *.css ]]; then
-                head -20 "$filepath" | sed "s/^/${GREEN}+ ${NC}/"
+                head -20 "$filepath" | while IFS= read -r line; do
+                    echo -e "${GREEN}+ ${line}${NC}"
+                done
                 if [[ $line_count -gt 20 ]]; then
-                    echo "+ ... ($(( $line_count - 20 )) more lines)"
+                    echo -e "${GREEN}+ ... ($(( $line_count - 20 )) more lines)${NC}"
                 fi
             else
-                echo "+ [Binary file: $mime_type, $(($file_size / 1024))KB]"
+                echo -e "${GREEN}+ [Binary file: $mime_type, $(($file_size / 1024))KB]${NC}"
             fi
         else
-            echo "+ [File not found or removed]"
+            echo -e "${GREEN}+ [File not found or removed]${NC}"
         fi
         echo
     elif [[ "$event" == *"DELETE"* ]] || [[ "$event" == *"MOVED_FROM"* ]]; then
@@ -121,7 +123,9 @@ show_changes() {
         local backup_file="$TEMP_DIR/$(basename "$filepath").backup"
         if [[ -f "$backup_file" ]]; then
             echo "Previous content:"
-            cat "$backup_file" | sed "s/^/${RED}- ${NC}/"
+            cat "$backup_file" | while IFS= read -r line; do
+                echo -e "${RED}- ${line}${NC}"
+            done
             rm -f "$backup_file"
         fi
         echo
